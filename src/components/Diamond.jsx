@@ -16,9 +16,10 @@ export default function Diamond({ scene }) {
 
   const diamondMeshes = useMemo(() => {
     const meshes = [];
+    scene.updateMatrixWorld(true);
 
     scene.traverse((child) => {
-      if (child.isMesh && (child.name.startsWith("D") && child.name.includes("Diam_Centr"))) {
+      if (child.isMesh && child.name.includes("Diam_Centr")) {
         meshes.push(child);
       }
     });
