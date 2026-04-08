@@ -29,7 +29,7 @@ export default function ModelViewer({ modelUrl, envUrl }) {
       // 2. Pass the Leva values to the environmentRotation prop
       environmentRotation={[0, -4.84, 0]}
 
-      environmentIntensity={1.5}
+    
       // Optional: Add backgroundRotation={...} if you also want the visible HDRI background to rotate
     />
           
