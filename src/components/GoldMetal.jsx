@@ -1,38 +1,87 @@
 import { useEffect, useMemo } from "react";
+import * as THREE from "three";
 import { MeshPhysicalNodeMaterial } from "three/webgpu";
-import { color, reflectVector, pmremTexture, float, vec3, dot, pow, transformedNormalView, positionViewDirection } from "three/tsl";
+import { color, mix, luminance, uniform } from "three/tsl";
+import { useControls } from "leva";
 
 export default function GoldMetal({ scene, envMap }) {
-  const goldMaterial = useMemo(() => {
-    const material = new MeshPhysicalNodeMaterial({
-      metalness: 1,
-      roughness: 0.02,
-      clearcoat: 0.18,
-      clearcoatRoughness: 0.03,
+  // 1. Leva Controls
+  const settings = useControls("Metal Post-Process", {
+    exposure: { value: 1.0, min: 0, max: 2, step: 0.01 },
+    brightness: { value: 0.0, min: -0.5, max: 0.5, step: 0.01 },
+    contrast: { value: 1.0, min: 0.5, max: 1.5, step: 0.01 },
+    saturation: { value: 1.0, min: 0, max: 2, step: 0.01 },
+    goldBase: "#f5d095",
+    blackBase: "#1a1a1a",
+  });
+
+  // 2. Setup Uniforms (This is the "Pro" way to handle real-time updates)
+  // Uniforms allow the GPU to see the change WITHOUT re-compiling the shader.
+  const uniforms = useMemo(() => ({
+    exposure: uniform(1.0),
+    brightness: uniform(0.0),
+    contrast: uniform(1.0),
+    saturation: uniform(1.0),
+    goldColor: uniform(color("#f5d095")),
+    blackColor: uniform(color("#1a1a1a"))
+  }), []);
+
+  // 3. Global Environment Setup
+  useEffect(() => {
+    if (!envMap) return;
+    envMap.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = envMap;
+  }, [envMap, scene]);
+
+  // 4. Create Materials ONCE
+  const { goldMaterial, blackMaterial } = useMemo(() => {
+    const applyGrading = (baseNode) => {
+      let res = baseNode.mul(uniforms.exposure);
+      res = res.add(uniforms.brightness);
+      res = res.sub(0.5).mul(uniforms.contrast).add(0.5);
+      const gray = luminance(res);
+      return mix(gray, res, uniforms.saturation);
+    };
+
+    const gold = new MeshPhysicalNodeMaterial({
+      metalness: 1.0,
+      roughness: 0.03,
+      clearcoat: 1.0,
     });
+    gold.colorNode = applyGrading(uniforms.goldColor);
 
-    const goldTint = color("#ffc266");
-    const envRes = pmremTexture(envMap, reflectVector, float(0.01));
-    const envBrightnessMultiplier = float(6.0);
-    const brightEnv = envRes.mul(envBrightnessMultiplier);
-    const luminance = brightEnv.dot(vec3(0.2126, 0.7152, 0.0722));
-    const highlightMask = pow(luminance.clamp(0, 1), float(10.0));
-    const viewDotNormal = dot(transformedNormalView, positionViewDirection.negate()).clamp(0, 1);
-    const fresnel = pow(float(1.0).sub(viewDotNormal), float(5.0));
-    const finalHighlight = highlightMask.add(fresnel.mul(5.0)).clamp(0, 1);
+    const black = new MeshPhysicalNodeMaterial({
+      metalness: 1.0,
+      roughness: 0.35,
+    });
+    black.colorNode = applyGrading(uniforms.blackColor);
 
-    material.colorNode = goldTint.mul(finalHighlight);
+    return { goldMaterial: gold, blackMaterial: black };
+  }, [uniforms]);
 
-    return material;
-  }, [envMap]);
+  // 5. UPDATE UNIFORMS (This makes it real-time)
+  useEffect(() => {
+    uniforms.exposure.value = settings.exposure;
+    uniforms.brightness.value = settings.brightness;
+    uniforms.contrast.value = settings.contrast;
+    uniforms.saturation.value = settings.saturation;
+    uniforms.goldColor.value.set(settings.goldBase);
+    uniforms.blackColor.value.set(settings.blackBase);
 
+    // Optional: Only needed if the visual doesn't refresh automatically in your loop
+    // goldMaterial.needsUpdate = true;
+    // blackMaterial.needsUpdate = true;
+  }, [settings, uniforms]);
+
+  // 6. Apply to Scene
   useEffect(() => {
     scene.traverse((child) => {
-      if (child.isMesh && child.name.startsWith("M")) {
-        child.material = goldMaterial;
+      if (child.isMesh) {
+        if (child.name === "Metal_Polish1") child.material = goldMaterial;
+        if (child.name === "Metal_Brush") child.material = blackMaterial;
       }
     });
-  }, [scene, goldMaterial]);
+  }, [scene, goldMaterial, blackMaterial]);
 
   return null;
 }

@@ -4,12 +4,12 @@ import Diamond from "./Diamond";
 
 export default function Model({ url }) {
   const { scene } = useGLTF(url);
-  const envMap = useEnvironment({ files: "/env_metal_001_d01c4504e0.hdr" });
+  const envMap = useEnvironment({ files: "/Untitled.exr" });
 
   return (
     <>
       <GoldMetal scene={scene} envMap={envMap} />
-      <Diamond scene={scene} />
+      {/* <Diamond scene={scene} /> */}
       <primitive object={scene} scale={1} />
     </>
   );

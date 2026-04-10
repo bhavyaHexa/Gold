@@ -19,7 +19,7 @@ export default function Diamond({ scene }) {
     scene.updateMatrixWorld(true);
 
     scene.traverse((child) => {
-      if (child.isMesh && child.name.includes("Diam_Centr")) {
+      if (child.isMesh && child.name.includes("D")) {
         meshes.push(child);
       }
     });
