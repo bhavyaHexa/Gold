@@ -23,7 +23,7 @@ export default function PostProcessing() {
 
     const params = useControls("SSR Settings", {
         enabled: true,
-        quality: { value: 0.5, min: 0, max: 1 },
+        quality: { value: 0.5, min: 0, max: 10 },
         blurQuality: { value: 1, min: 1, max: 3, step: 1 },
         maxDistance: { value: 1, min: 0, max: 10 },
         opacity: { value: 1, min: 0, max: 1 },
@@ -35,6 +35,9 @@ export default function PostProcessing() {
         depthThreshold: { value: 0.0005, min: 0, max: 0.01, step: 0.0001 },
         edgeDepthDiff: { value: 0.001, min: 0, max: 0.01, step: 0.0001 },
     });
+
+    // We use a uniform to toggle SSR input for TAA without re-creating history textures
+    const ssrEnabledUniform = useMemo(() => uniform(1), []);
 
     const pipelineData = useMemo(() => {
         // 1. Base Scene Pass (for SSR data)
@@ -63,19 +66,15 @@ export default function PostProcessing() {
             scenePassMetalRough.g  // Roughness
         );
 
-        // 3. TAA (TRAA) Pass
-        // Apply TAA to the scene color. Doing this BEFORE SSR is more stable 
-        // because the scene color has perfectly matching depth and velocity data.
-        const traaNode = traa(scenePassColor, scenePassDepth, scenePassVelocity, camera);
+        // 3. Composition: Combine Scene + SSR
+        // We combine them into a single vec4 to pass into TAA
+        const sceneWithSSR = vec4(scenePassColor.rgb.add(ssrNode.rgb), scenePassColor.a);
 
-        // 4. Composition Options
-        // If TAA is enabled, we use the anti-aliased scene + SSR
-        const out_TAA_SSR = vec4(traaNode.rgb.add(ssrNode.rgb), traaNode.a);
-        // If TAA is enabled but SSR is off, just the anti-aliased scene
-        const out_TAA_Only = traaNode;
-        // If TAA is off, we use the raw scene + SSR (or just raw scene)
-        const out_SSR_Only = vec4(scenePassColor.rgb.add(ssrNode.rgb), scenePassColor.a);
-        const out_None = scenePass;
+        // 4. TAA (TRAA) Pass
+        // By passing the combined color into TAA, we stabilize both the geometry edges and the reflections.
+        // We use a conditional input based on the uniform for smooth toggling between states.
+        const inputForTAA = ssrEnabledUniform.equal(1).select(sceneWithSSR, scenePassColor);
+        const traaNode = traa(inputForTAA, scenePassDepth, scenePassVelocity, camera);
 
         const renderPipeline = new THREE.RenderPipeline(gl);
 
@@ -85,13 +84,12 @@ export default function PostProcessing() {
             scenePass,
             traaNode,
             outputs: {
-                taaSSR: out_TAA_SSR,
-                taaOnly: out_TAA_Only,
-                ssrOnly: out_SSR_Only,
-                none: out_None
+                taa: traaNode,
+                ssrOnly: sceneWithSSR,
+                none: scenePass
             }
         };
-    }, [gl, scene, camera]);
+    }, [gl, scene, camera, ssrEnabledUniform]);
 
     useEffect(() => {
         const { ssrNode, renderPipeline, traaNode, outputs } = pipelineData;
@@ -107,11 +105,13 @@ export default function PostProcessing() {
         traaNode.depthThreshold = taaParams.depthThreshold;
         traaNode.edgeDepthDiff = taaParams.edgeDepthDiff;
 
-        // Toggle logic
-        if (taaParams.enabled && params.enabled) {
-            renderPipeline.outputNode = outputs.taaSSR;
-        } else if (taaParams.enabled) {
-            renderPipeline.outputNode = outputs.taaOnly;
+        // Update the internal uniform for the TAA branch
+        ssrEnabledUniform.value = params.enabled ? 1 : 0;
+
+        // Toggle logic for the main pipeline output
+        if (taaParams.enabled) {
+            // TAA output already accounts for SSR via the internal uniform
+            renderPipeline.outputNode = outputs.taa;
         } else if (params.enabled) {
             renderPipeline.outputNode = outputs.ssrOnly;
         } else {
@@ -120,7 +120,7 @@ export default function PostProcessing() {
 
         renderPipeline.needsUpdate = true;
 
-    }, [params, taaParams, pipelineData]);
+    }, [params, taaParams, pipelineData, ssrEnabledUniform]);
 
     useFrame(() => {
         // Manual render call for the WebGPU pipeline
