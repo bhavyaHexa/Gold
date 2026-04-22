@@ -40,6 +40,10 @@ export default function PostProcessing() {
         thickness: { value: 0.03, min: 0, max: 0.1 },
     });
 
+    const traaParams = useControls("TRAA Settings", {
+        enabled: true,
+    });
+
     // 1. Setup Pipeline Logic
     const pipelineData = useMemo(() => {
         const renderPipeline = new THREE.RenderPipeline(gl);
@@ -106,13 +110,14 @@ export default function PostProcessing() {
             renderPipeline,
             ssgiNode,
             ssrNode,
-            traaNode
+            traaNode,
+            sceneWithSSGIandSSR
         };
     }, [gl, scene, camera]);
 
     // 2. Dynamic Uniform Updates
     useEffect(() => {
-        const { ssgiNode, ssrNode, traaNode, renderPipeline } = pipelineData;
+        const { ssgiNode, ssrNode, traaNode, sceneWithSSGIandSSR, renderPipeline } = pipelineData;
 
         // Update SSGI settings from Leva
         ssgiNode.giIntensity.value = ssgiParams.enabled ? ssgiParams.giIntensity : 0;
@@ -125,11 +130,11 @@ export default function PostProcessing() {
         ssrNode.opacity.value = ssrParams.enabled ? ssrParams.opacity : 0;
         ssrNode.thickness.value = ssrParams.thickness;
 
-        // Set final output to TRAA
-        renderPipeline.outputNode = traaNode;
+        // Set final output
+        renderPipeline.outputNode = traaParams.enabled ? traaNode : sceneWithSSGIandSSR;
         renderPipeline.needsUpdate = true;
 
-    }, [ssgiParams, ssrParams, pipelineData]);
+    }, [ssgiParams, ssrParams, traaParams, pipelineData]);
 
     useFrame(() => {
         // Essential: Update camera world matrix before rendering the pipeline
