@@ -27,11 +27,15 @@ export default function PostProcessing() {
 
     const ssgiParams = useControls("SSGI Settings", {
         enabled: true,
+        useScreenSpaceSampling: true,
         giIntensity: { value: 2.0, min: 0, max: 10 },
         aoIntensity: { value: 1.0, min: 0, max: 4 },
         radius: { value: 5, min: 1, max: 25 },
         sliceCount: { value: 2, min: 1, max: 4, step: 1 },
         stepCount: { value: 8, min: 1, max: 32, step: 1 },
+        thickness: { value: 1.0, min: 0, max: 10 },
+        expFactor: { value: 2.0, min: 1, max: 4 },
+        backfaceLighting: { value: 0.5, min: 0, max: 1 },
     });
 
     const ssrParams = useControls("SSR Settings", {
@@ -122,9 +126,13 @@ export default function PostProcessing() {
         // Update SSGI settings from Leva
         ssgiNode.giIntensity.value = ssgiParams.enabled ? ssgiParams.giIntensity : 0;
         ssgiNode.aoIntensity.value = ssgiParams.enabled ? ssgiParams.aoIntensity : 0;
+        ssgiNode.useScreenSpaceSampling.value = ssgiParams.useScreenSpaceSampling;
         ssgiNode.radius.value = ssgiParams.radius;
         ssgiNode.sliceCount.value = ssgiParams.sliceCount;
         ssgiNode.stepCount.value = ssgiParams.stepCount;
+        ssgiNode.thickness.value = ssgiParams.thickness;
+        ssgiNode.expFactor.value = ssgiParams.expFactor;
+        ssgiNode.backfaceLighting.value = ssgiParams.backfaceLighting;
 
         // Update SSR settings from Leva
         ssrNode.opacity.value = ssrParams.enabled ? ssrParams.opacity : 0;
