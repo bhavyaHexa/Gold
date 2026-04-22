@@ -14,7 +14,7 @@ export default function Model({ url }) {
 
   const customGoldMaterial = useMemo(() => {
     return new MeshPhysicalMaterial({
-      color: "#f5d095",
+      color: "#ffffff",
       // 1. Pick one: High Metalness (Opaque Gold) OR High Transmission (Gold Glass)
       metalness: 1.0,         // Keep this low if using transmission
       roughness: 0.05,

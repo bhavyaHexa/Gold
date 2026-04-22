@@ -6,6 +6,7 @@ import * as THREE from "three";
 import Model from "./Model";
 import { RotateModelWrapper } from "./RotateModelWrapper";
 import PostProcessing from "./PostProcessing";
+import Lights from "./Lights";
 
 
 function ToneMappingDebugger() {
@@ -54,7 +55,11 @@ export default function ModelViewer({ modelUrl, envUrl }) {
 
         gl={async (props) => {
           const { WebGPURenderer } = await import("three/webgpu");
-          const renderer = new WebGPURenderer({ ...props, antialias: false });
+          const renderer = new WebGPURenderer({ 
+            ...props, 
+            antialias: false,
+            requiredLimits: { maxColorAttachmentBytesPerSample: 128 }
+          });
 
           // 3. Set NoToneMapping as the default during initialization
           renderer.toneMapping = THREE.NoToneMapping;
@@ -74,7 +79,7 @@ export default function ModelViewer({ modelUrl, envUrl }) {
             environmentIntensity={1}
             environmentRotation={[0, -4.38, 0]}
           />
-
+          {/* <Lights /> */}
           <RotateModelWrapper minPitch={-0.2} maxPitch={1.5}>
             <Model url={modelUrl} />
 
