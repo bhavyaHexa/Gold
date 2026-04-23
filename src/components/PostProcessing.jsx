@@ -15,137 +15,175 @@ import {
     add,
     diffuseColor,
     colorToDirection,
-    sample
+    sample,
+    screenUV,
+    builtinAOContext,
+    uniform,
+    mix,
+    float
 } from "three/tsl";
 import { ssr } from "three/addons/tsl/display/SSRNode.js";
 import { traa } from "three/addons/tsl/display/TRAANode.js";
 import { ssgi } from 'three/addons/tsl/display/SSGINode.js';
+import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { useControls } from "leva";
 
 export default function PostProcessing() {
     const { gl, scene, camera } = useThree();
 
+    // GTAO Controls
+    const aoParams = useControls("GTAO Settings", {
+        enabled: true,
+        radius: { value: 1.25, min: 0.1, max: 2 },
+        thickness: { value: 1.5, min: 0.01, max: 2 },
+        scale: { value: 1.0, min: 0.01, max: 2 },
+        samples: { value: 20, min: 4, max: 32, step: 1 },
+        distanceFallOff: { value: 1.0, min: 0.01, max: 1 },
+    });
+
     const ssgiParams = useControls("SSGI Settings", {
         enabled: true,
+        giIntensity: { value: 5, min: 0, max: 10 },
+        aoIntensity: { value: 0.3, min: 0, max: 4 },
+        radius: { value: 18, min: 1, max: 25 },
+        sliceCount: { value: 4, min: 1, max: 4, step: 1 },
+        stepCount: { value: 32, min: 1, max: 32, step: 1 },
+        thickness: { value: 8, min: 0, max: 10 },
         useScreenSpaceSampling: true,
-        giIntensity: { value: 2.0, min: 0, max: 10 },
-        aoIntensity: { value: 1.0, min: 0, max: 4 },
-        radius: { value: 5, min: 1, max: 25 },
-        sliceCount: { value: 2, min: 1, max: 4, step: 1 },
-        stepCount: { value: 8, min: 1, max: 32, step: 1 },
-        thickness: { value: 1.0, min: 0, max: 10 },
-        expFactor: { value: 2.0, min: 1, max: 4 },
-        backfaceLighting: { value: 0.5, min: 0, max: 1 },
+        useTemporalFiltering: true,
+        backfaceLighting: { value: 0.1, min: 0, max: 1 },
+        expFactor: { value: 3, min: 1, max: 3 },
     });
 
     const ssrParams = useControls("SSR Settings", {
         enabled: true,
         opacity: { value: 1, min: 0, max: 1 },
-        thickness: { value: 0.03, min: 0, max: 0.1 },
+        thickness: { value: 0.3, min: 0, max: 1.0 },
     });
 
     const traaParams = useControls("TRAA Settings", {
         enabled: true,
     });
 
-    // 1. Setup Pipeline Logic
     const pipelineData = useMemo(() => {
         const renderPipeline = new THREE.RenderPipeline(gl);
-        const scenePass = pass(scene, camera);
 
-        // Define MRT Layout
+        // --- PHASE 0: PRE-PASS (For AO & Geometry) ---
+        const prePass = pass(scene, camera);
+        prePass.name = 'Pre-Pass';
+        prePass.setMRT(mrt({
+            output: directionToColor(normalView),
+            velocity: velocity
+        }));
+
+        // Bandwidth optimization for normals
+        const normalTexture = prePass.getTexture('output');
+        normalTexture.type = THREE.UnsignedByteType;
+
+        const prePassDepth = prePass.getTextureNode('depth');
+        const prePassNormal = sample((uv) => colorToDirection(prePass.getTextureNode('output').sample(uv)));
+        const prePassVelocity = prePass.getTextureNode('velocity');
+
+        // --- PHASE 1: GTAO ---
+        const aoPass = ao(prePassDepth, prePassNormal, camera);
+        aoPass.resolutionScale = 0.5; // Performance boost
+        aoPass.useTemporalFiltering = true;
+        const aoPassOutput = aoPass.getTextureNode();
+
+        // --- PHASE 2: SCENE PASS (With AO Context) ---
+        const scenePass = pass(scene, camera);
+        const gtaoIntensityNode = uniform(1);
+        // This is key: Injecting AO into the scene's lighting calculation
+        scenePass.contextNode = builtinAOContext(mix(float(1), aoPassOutput.sample(screenUV).r, gtaoIntensityNode));
+
         scenePass.setMRT(mrt({
             output,
             diffuseColor,
-            normal: directionToColor(normalView),
             metalrough: vec2(metalness, roughness),
-            velocity
         }));
 
-        // --- BANDWIDTH OPTIMIZATION ---
-        // Force 8-bit textures for diffuse and normal to stay under the 32-byte WebGPU limit
-        scenePass.getTexture('diffuseColor').type = THREE.UnsignedByteType;
-        scenePass.getTexture('normal').type = THREE.UnsignedByteType;
-
-        // Texture Nodes
         const scenePassColor = scenePass.getTextureNode('output');
         const scenePassDiffuse = scenePass.getTextureNode('diffuseColor');
-        const scenePassDepth = scenePass.getTextureNode('depth');
-        const scenePassNormal = scenePass.getTextureNode('normal');
         const scenePassMetalRough = scenePass.getTextureNode('metalrough');
-        const scenePassVelocity = scenePass.getTextureNode('velocity');
 
-        // Convert packed normals back to directions for SSGI math
-        const sceneNormal = sample((uv) => colorToDirection(scenePassNormal.sample(uv)));
+        // --- PHASE 3: SSGI ---
+        // We use prePassNormal/Depth to avoid re-rendering scene for SSGI math
+        const ssgiNode = ssgi(scenePassColor, prePassDepth, prePassNormal, camera);
 
-        // --- PHASE 1: SSGI ---
-        const ssgiNode = ssgi(scenePassColor, scenePassDepth, sceneNormal, camera);
-
-        // Composite SSGI: (DirectLight * AO) + (Diffuse * IndirectGI)
-        // scenePassColor.a ensures the background remains unaffected
         const ssgiComposited = vec4(
             add(scenePassColor.rgb.mul(ssgiNode.a), scenePassDiffuse.rgb.mul(ssgiNode.rgb)),
             scenePassColor.a
         );
 
-        // --- PHASE 2: SSR ---
-        // Create a samplable version of the SSGI-lit scene for SSR to use.
-        // We use sample() with context({ uv }) to make the composited expression samplable without a new pass.
+        // --- PHASE 4: SSR ---
         const ssgiCompositedSamplable = sample((uv) => ssgiComposited.context({ uv }));
-
-        // Apply SSR on top of the SSGI-lit result
         const ssrNode = ssr(
             ssgiCompositedSamplable,
-            scenePassDepth,
-            sceneNormal,
+            prePassDepth,
+            prePassNormal,
             scenePassMetalRough.r,
             scenePassMetalRough.g,
-            camera // Required for TSL SSR
+            camera
         );
 
-        // Merge SSR reflections with the SSGI scene
         const sceneWithSSGIandSSR = vec4(ssrNode.rgb.add(ssgiComposited.rgb), scenePassColor.a);
 
-        // --- PHASE 3: TRAA ---
-        // Temporal Anti-Aliasing stabilizes the noise from both SSGI and SSR
-        const traaNode = traa(sceneWithSSGIandSSR, scenePassDepth, scenePassVelocity, camera);
+        // --- PHASE 5: TRAA ---
+        const traaNode = traa(sceneWithSSGIandSSR, prePassDepth, prePassVelocity, camera);
 
         return {
             renderPipeline,
+            aoPass,
             ssgiNode,
             ssrNode,
             traaNode,
-            sceneWithSSGIandSSR
+            sceneWithSSGIandSSR,
+            gtaoIntensityNode
         };
     }, [gl, scene, camera]);
 
-    // 2. Dynamic Uniform Updates
     useEffect(() => {
-        const { ssgiNode, ssrNode, traaNode, sceneWithSSGIandSSR, renderPipeline } = pipelineData;
+        if (!pipelineData) return;
+        const { aoPass, ssgiNode, ssrNode, traaNode, sceneWithSSGIandSSR, renderPipeline, gtaoIntensityNode } = pipelineData;
 
-        // Update SSGI settings from Leva
-        ssgiNode.giIntensity.value = ssgiParams.enabled ? ssgiParams.giIntensity : 0;
-        ssgiNode.aoIntensity.value = ssgiParams.enabled ? ssgiParams.aoIntensity : 0;
-        ssgiNode.useScreenSpaceSampling.value = ssgiParams.useScreenSpaceSampling;
-        ssgiNode.radius.value = ssgiParams.radius;
-        ssgiNode.sliceCount.value = ssgiParams.sliceCount;
-        ssgiNode.stepCount.value = ssgiParams.stepCount;
-        ssgiNode.thickness.value = ssgiParams.thickness;
-        ssgiNode.expFactor.value = ssgiParams.expFactor;
-        ssgiNode.backfaceLighting.value = ssgiParams.backfaceLighting;
+        // Update GTAO
+        if (aoPass && gtaoIntensityNode) {
+            aoPass.radius.value = aoParams.radius;
+            aoPass.thickness.value = aoParams.thickness;
+            aoPass.scale.value = aoParams.scale;
+            aoPass.samples.value = aoParams.samples;
+            aoPass.distanceFallOff.value = aoParams.distanceFallOff;
+            gtaoIntensityNode.value = aoParams.enabled ? 1 : 0;
+        }
 
-        // Update SSR settings from Leva
-        ssrNode.opacity.value = ssrParams.enabled ? ssrParams.opacity : 0;
-        ssrNode.thickness.value = ssrParams.thickness;
+        // Update SSGI
+        if (ssgiNode) {
+            ssgiNode.giIntensity.value = ssgiParams.enabled ? ssgiParams.giIntensity : 0;
+            ssgiNode.aoIntensity.value = ssgiParams.enabled ? ssgiParams.aoIntensity : 0;
+            ssgiNode.radius.value = ssgiParams.radius;
+            ssgiNode.sliceCount.value = ssgiParams.sliceCount;
+            ssgiNode.stepCount.value = ssgiParams.stepCount;
+            ssgiNode.thickness.value = ssgiParams.thickness;
+            ssgiNode.useScreenSpaceSampling.value = ssgiParams.useScreenSpaceSampling;
+            ssgiNode.useTemporalFiltering = ssgiParams.useTemporalFiltering;
+            ssgiNode.backfaceLighting.value = ssgiParams.backfaceLighting;
+            ssgiNode.expFactor.value = ssgiParams.expFactor;
+        }
 
-        // Set final output
+        // Update SSR
+        if (ssrNode) {
+            ssrNode.opacity.value = ssrParams.enabled ? ssrParams.opacity : 0;
+            ssrNode.thickness.value = ssrParams.thickness;
+        }
+
+        // Final Output
         renderPipeline.outputNode = traaParams.enabled ? traaNode : sceneWithSSGIandSSR;
         renderPipeline.needsUpdate = true;
 
-    }, [ssgiParams, ssrParams, traaParams, pipelineData]);
+    }, [aoParams, ssgiParams, ssrParams, traaParams, pipelineData]);
 
     useFrame(() => {
-        // Essential: Update camera world matrix before rendering the pipeline
+        if (!pipelineData.renderPipeline.outputNode) return;
         camera.updateMatrixWorld();
         pipelineData.renderPipeline.render();
     }, 1);

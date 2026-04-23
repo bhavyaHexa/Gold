@@ -41,7 +41,7 @@ export default function ModelViewer({ modelUrl, envUrl }) {
     <div style={{ background: "#ffffff", width: "100vw", height: "100vh" }}>
       <Canvas
 
-        flat
+
 
         camera={{ position: [0, 2, 10], fov: 12, near: 0.1, far: 100 }}
 
