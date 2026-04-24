@@ -74,14 +74,14 @@ export default function ModelViewer({ modelUrl, envUrl }) {
           <color attach="background" args={["#ffffff"]} />
           <Environment
             frames={Infinity}
-            files={"/env_metal_001_d01c4504e0.hdr"}
+            files={envUrl}
             resolution={256}
             environmentIntensity={1}
             environmentRotation={[0, -4.38, 0]}
           />
 
           <RotateModelWrapper minPitch={-0.2} maxPitch={1.5}>
-            <Model url={modelUrl} />
+            <Model url={modelUrl} envUrl={envUrl} />
 
             {/* <mesh position={[-1, 0, -2]}>
               <sphereGeometry args={[0.5, 64, 64]} />

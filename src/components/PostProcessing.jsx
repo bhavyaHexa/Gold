@@ -43,9 +43,9 @@ export default function PostProcessing() {
 
     const ssgiParams = useControls("SSGI Settings", {
         enabled: true,
-        giIntensity: { value: 5, min: 0, max: 10 },
-        aoIntensity: { value: 0.3, min: 0, max: 4 },
-        radius: { value: 18, min: 1, max: 25 },
+        giIntensity: { value: 0.5, min: 0, max: 10 },
+        aoIntensity: { value: 0.1, min: 0, max: 4 },
+        radius: { value: 1.0, min: 1, max: 25 },
         sliceCount: { value: 4, min: 1, max: 4, step: 1 },
         stepCount: { value: 32, min: 1, max: 32, step: 1 },
         thickness: { value: 8, min: 0, max: 10 },
@@ -57,8 +57,15 @@ export default function PostProcessing() {
 
     const ssrParams = useControls("SSR Settings", {
         enabled: true,
-        opacity: { value: 1, min: 0, max: 1 },
-        thickness: { value: 0.3, min: 0, max: 1.0 },
+        intensity: { value: 1.0, min: 0, max: 2, step: 0.01 },
+        boost: { value: [1.00, 1.00, 1.00] },
+        radius: { value: 1.00, min: 0.01, max: 10, step: 0.01, label: "object radius" },
+        autoRadius: { value: true, label: "auto radius" },
+        power: { value: 1.10, min: 0.1, max: 5, step: 0.01 },
+        tolerance: { value: 0.5, min: 0.01, max: 2, step: 0.01 },
+        stepCount: { value: 16, min: 1, max: 128, step: 1, label: "step count" },
+        ignoreFrontRays: { value: true, label: "ignore front rays" },
+        maskFrontRaysFactor: { value: -0.2, min: -10, max: 10, step: 0.01, label: "mask front rays factor" },
     });
 
     const traaParams = useControls("TRAA Settings", {
@@ -172,8 +179,22 @@ export default function PostProcessing() {
 
         // Update SSR
         if (ssrNode) {
-            ssrNode.opacity.value = ssrParams.enabled ? ssrParams.opacity : 0;
-            ssrNode.thickness.value = ssrParams.thickness;
+            // Standard properties fallback
+            if (ssrNode.opacity) ssrNode.opacity.value = ssrParams.enabled ? ssrParams.intensity : 0;
+            if (ssrNode.thickness) ssrNode.thickness.value = ssrParams.tolerance;
+            if (ssrNode.maxDistance) ssrNode.maxDistance.value = ssrParams.radius;
+            if (ssrNode.quality) ssrNode.quality.value = ssrParams.stepCount / 32;
+
+            // Advanced properties (if present in a custom SSRNode)
+            if (ssrNode.intensity) ssrNode.intensity.value = ssrParams.enabled ? ssrParams.intensity : 0;
+            if (ssrNode.boost) ssrNode.boost.value.set(ssrParams.boost[0], ssrParams.boost[1], ssrParams.boost[2]);
+            if (ssrNode.radius) ssrNode.radius.value = ssrParams.radius;
+            if (ssrNode.autoRadius !== undefined) ssrNode.autoRadius = ssrParams.autoRadius;
+            if (ssrNode.power) ssrNode.power.value = ssrParams.power;
+            if (ssrNode.tolerance) ssrNode.tolerance.value = ssrParams.tolerance;
+            if (ssrNode.stepCount) ssrNode.stepCount.value = ssrParams.stepCount;
+            if (ssrNode.ignoreFrontRays !== undefined) ssrNode.ignoreFrontRays = ssrParams.ignoreFrontRays;
+            if (ssrNode.maskFrontRaysFactor) ssrNode.maskFrontRaysFactor.value = ssrParams.maskFrontRaysFactor;
         }
 
         // Final Output

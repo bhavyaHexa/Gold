@@ -4,9 +4,9 @@ import { MeshPhysicalNodeMaterial, MeshStandardNodeMaterial } from "three/webgpu
 import { color, reflectVector, pmremTexture, float, vec3, dot, pow, transformedNormalView, positionViewDirection } from "three/tsl";
 import { MeshPhysicalMaterial } from "three";
 
-export default function Model({ url }) {
+export default function Model({ url, envUrl }) {
   const { scene } = useGLTF(url);
-  const envMap = useEnvironment({ files: "/env_metal_001_d01c4504e0.hdr" });
+  const envMap = useEnvironment({ files: envUrl });
 
 
 
@@ -38,13 +38,19 @@ export default function Model({ url }) {
   }, [envMap]);
   const currentBlackMat = useMemo(() => new MeshPhysicalMaterial({ color: "#c2a475", metalness: 1, roughness: 0.4 }), []);
 
+  const currentDiamond = useMemo(() => new MeshPhysicalMaterial({ color: "#e1e1e1", metalness: 1, roughness: 0.4 }), []);
+
   useEffect(() => {
     scene.traverse((child) => {
       if (child.isMesh) {
-        if (child.name === "Metal_Polish1") {
+        if (child.name === "mesh_0" || child.name === "mesh_1" || child.name === "Metal_Polish1") {
           child.material = customGoldMaterial;
-        } else if (child.name === "Metal_Brush") {
-          child.material = currentBlackMat;
+        }
+        // else if (child.name === "mesh_1") {
+        //   child.material = currentBlackMat;
+        // }
+        else if (child.name !== "mesh_0" && child.name !== "mesh_1") {
+          child.material = currentDiamond;
         }
       }
     });
