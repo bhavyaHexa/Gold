@@ -28,10 +28,12 @@ import { ssgi } from 'three/addons/tsl/display/SSGINode.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { useControls } from "leva";
 
+// --- CUSTOM LOGIC IMPORT ---
+import { applyFrontRayMask } from "./FrontRayMask";
+
 export default function PostProcessing() {
     const { gl, scene, camera } = useThree();
 
-    // GTAO Controls
     const aoParams = useControls("GTAO Settings", {
         enabled: true,
         radius: { value: 1.25, min: 0.1, max: 2 },
@@ -43,7 +45,7 @@ export default function PostProcessing() {
 
     const ssgiParams = useControls("SSGI Settings", {
         enabled: true,
-        giIntensity: { value: 0.5, min: 0, max: 10 },
+        giIntensity: { value: 2.0, min: 0, max: 10 },
         aoIntensity: { value: 0.1, min: 0, max: 4 },
         radius: { value: 1.0, min: 1, max: 25 },
         sliceCount: { value: 4, min: 1, max: 4, step: 1 },
@@ -63,51 +65,44 @@ export default function PostProcessing() {
         autoRadius: { value: true, label: "auto radius" },
         power: { value: 1.10, min: 0.1, max: 5, step: 0.01 },
         tolerance: { value: 0.5, min: 0.01, max: 2, step: 0.01 },
-        stepCount: { value: 16, min: 1, max: 128, step: 1, label: "step count" },
-        ignoreFrontRays: { value: true, label: "ignore front rays" },
-        maskFrontRaysFactor: { value: -0.2, min: -10, max: 10, step: 0.01, label: "mask front rays factor" },
+        stepCount: { value: 32, min: 1, max: 128, step: 1, label: "step count" },
+        // --- Custom Mask Controls ---
+        maskMin: { value: 0.00, min: 0, max: 1, label: "Mask Start (Grazing)" },
+        maskMax: { value: 1.00, min: 0, max: 1, label: "Mask End (Front)" },
     });
 
-    const traaParams = useControls("TRAA Settings", {
-        enabled: true,
-    });
+    const traaParams = useControls("TRAA Settings", { enabled: true });
 
     const debugParams = useControls("Debug View", {
         outputNode: {
             value: 'Final',
-            options: ['Final', 'Normal', 'Depth', 'Velocity', 'AO', 'SSGI', 'SSR']
+            options: ['Final', 'Normal', 'Depth', 'Velocity', 'AO', 'SSGI', 'SSR', 'SSR Mask Only']
         }
     });
 
     const pipelineData = useMemo(() => {
         const renderPipeline = new THREE.RenderPipeline(gl);
 
-        // --- PHASE 0: PRE-PASS (For AO & Geometry) ---
+        // PHASE 0: PRE-PASS
         const prePass = pass(scene, camera);
-        prePass.name = 'Pre-Pass';
         prePass.setMRT(mrt({
             output: directionToColor(normalView),
             velocity: velocity
         }));
 
-        // Bandwidth optimization for normals
-        const normalTexture = prePass.getTexture('output');
-        normalTexture.type = THREE.UnsignedByteType;
-
         const prePassDepth = prePass.getTextureNode('depth');
         const prePassNormal = sample((uv) => colorToDirection(prePass.getTextureNode('output').sample(uv)));
         const prePassVelocity = prePass.getTextureNode('velocity');
 
-        // --- PHASE 1: GTAO ---
+        // PHASE 1: GTAO
         const aoPass = ao(prePassDepth, prePassNormal, camera);
-        aoPass.resolutionScale = 0.5; // Performance boost
+        aoPass.resolutionScale = 0.5;
         aoPass.useTemporalFiltering = true;
         const aoPassOutput = aoPass.getTextureNode();
 
-        // --- PHASE 2: SCENE PASS (With AO Context) ---
+        // PHASE 2: SCENE PASS
         const scenePass = pass(scene, camera);
         const gtaoIntensityNode = uniform(1);
-        // This is key: Injecting AO into the scene's lighting calculation
         scenePass.contextNode = builtinAOContext(mix(float(1), aoPassOutput.sample(screenUV).r, gtaoIntensityNode));
 
         scenePass.setMRT(mrt({
@@ -120,18 +115,17 @@ export default function PostProcessing() {
         const scenePassDiffuse = scenePass.getTextureNode('diffuseColor');
         const scenePassMetalRough = scenePass.getTextureNode('metalrough');
 
-        // --- PHASE 3: SSGI ---
-        // We use prePassNormal/Depth to avoid re-rendering scene for SSGI math
+        // PHASE 3: SSGI
         const ssgiNode = ssgi(scenePassColor, prePassDepth, prePassNormal, camera);
-
         const ssgiComposited = vec4(
             add(scenePassColor.rgb.mul(ssgiNode.a), scenePassDiffuse.rgb.mul(ssgiNode.rgb)),
             scenePassColor.a
         );
 
-        // --- PHASE 4: SSR ---
+        // --- PHASE 4: SSR WITH CUSTOM FRONT RAY MASK ---
         const ssgiCompositedSamplable = sample((uv) => ssgiComposited.context({ uv }));
-        const ssrNode = ssr(
+
+        const baseSSRNode = ssr(
             ssgiCompositedSamplable,
             prePassDepth,
             prePassNormal,
@@ -140,16 +134,27 @@ export default function PostProcessing() {
             camera
         );
 
-        const sceneWithSSGIandSSR = vec4(ssrNode.rgb.add(ssgiComposited.rgb), scenePassColor.a);
+        // Uniforms for the front ray logic
+        const maskMinNode = uniform(0.00);
+        const maskMaxNode = uniform(1.00);
 
-        // --- PHASE 5: TRAA ---
+        // Apply our imported TSL logic
+        const maskedSSR = applyFrontRayMask(baseSSRNode.rgb, prePassNormal, maskMinNode, maskMaxNode);
+
+        // Composite using the masked version
+        const sceneWithSSGIandSSR = vec4(maskedSSR.add(ssgiComposited.rgb), scenePassColor.a);
+
+        // PHASE 5: TRAA
         const traaNode = traa(sceneWithSSGIandSSR, prePassDepth, prePassVelocity, camera);
 
         return {
             renderPipeline,
             aoPass,
             ssgiNode,
-            ssrNode,
+            ssrNode: baseSSRNode,
+            maskedSSR, // For debug view
+            maskMinNode,
+            maskMaxNode,
             traaNode,
             sceneWithSSGIandSSR,
             gtaoIntensityNode,
@@ -162,10 +167,10 @@ export default function PostProcessing() {
 
     useEffect(() => {
         if (!pipelineData) return;
-        const { aoPass, ssgiNode, ssrNode, traaNode, sceneWithSSGIandSSR, renderPipeline, gtaoIntensityNode } = pipelineData;
+        const { aoPass, ssgiNode, ssrNode, maskMinNode, maskMaxNode, traaNode, sceneWithSSGIandSSR, renderPipeline, gtaoIntensityNode } = pipelineData;
 
-        // Update GTAO
-        if (aoPass && gtaoIntensityNode) {
+        // Sync GTAO
+        if (aoPass) {
             aoPass.radius.value = aoParams.radius;
             aoPass.thickness.value = aoParams.thickness;
             aoPass.scale.value = aoParams.scale;
@@ -174,49 +179,36 @@ export default function PostProcessing() {
             gtaoIntensityNode.value = aoParams.enabled ? 1 : 0;
         }
 
-        // Update SSGI
+        // Sync SSGI
         if (ssgiNode) {
             ssgiNode.giIntensity.value = ssgiParams.enabled ? ssgiParams.giIntensity : 0;
             ssgiNode.aoIntensity.value = ssgiParams.enabled ? ssgiParams.aoIntensity : 0;
             ssgiNode.radius.value = ssgiParams.radius;
-            ssgiNode.sliceCount.value = ssgiParams.sliceCount;
             ssgiNode.stepCount.value = ssgiParams.stepCount;
             ssgiNode.thickness.value = ssgiParams.thickness;
-            ssgiNode.useScreenSpaceSampling.value = ssgiParams.useScreenSpaceSampling;
-            ssgiNode.useTemporalFiltering = ssgiParams.useTemporalFiltering;
-            ssgiNode.backfaceLighting.value = ssgiParams.backfaceLighting;
-            ssgiNode.expFactor.value = ssgiParams.expFactor;
         }
 
-        // Update SSR
+        // Sync SSR & Custom Mask
         if (ssrNode) {
-            // Standard properties fallback
-            if (ssrNode.opacity) ssrNode.opacity.value = ssrParams.enabled ? ssrParams.intensity : 0;
-            if (ssrNode.thickness) ssrNode.thickness.value = ssrParams.tolerance;
-            if (ssrNode.maxDistance) ssrNode.maxDistance.value = ssrParams.radius;
-            if (ssrNode.quality) ssrNode.quality.value = ssrParams.stepCount / 32;
+            ssrNode.opacity.value = ssrParams.enabled ? ssrParams.intensity : 0;
+            ssrNode.maxDistance.value = ssrParams.radius;
+            ssrNode.thickness.value = ssrParams.tolerance;
+            ssrNode.quality.value = ssrParams.stepCount / 128.0; // Map stepCount to quality range [0, 1]
 
-            // Advanced properties (if present in a custom SSRNode)
-            if (ssrNode.intensity) ssrNode.intensity.value = ssrParams.enabled ? ssrParams.intensity : 0;
-            if (ssrNode.boost) ssrNode.boost.value.set(ssrParams.boost[0], ssrParams.boost[1], ssrParams.boost[2]);
-            if (ssrNode.radius) ssrNode.radius.value = ssrParams.radius;
-            if (ssrNode.autoRadius !== undefined) ssrNode.autoRadius = ssrParams.autoRadius;
-            if (ssrNode.power) ssrNode.power.value = ssrParams.power;
-            if (ssrNode.tolerance) ssrNode.tolerance.value = ssrParams.tolerance;
-            if (ssrNode.stepCount) ssrNode.stepCount.value = ssrParams.stepCount;
-            if (ssrNode.ignoreFrontRays !== undefined) ssrNode.ignoreFrontRays = ssrParams.ignoreFrontRays;
-            if (ssrNode.maskFrontRaysFactor) ssrNode.maskFrontRaysFactor.value = ssrParams.maskFrontRaysFactor;
+            // Sync custom mask uniforms
+            maskMinNode.value = ssrParams.maskMin;
+            maskMaxNode.value = ssrParams.maskMax;
         }
 
-        // Final Output
+        // Final Output Logic
         let finalOutput = traaParams.enabled ? traaNode : sceneWithSSGIandSSR;
 
         if (debugParams.outputNode === 'Normal') finalOutput = pipelineData.prePassNormal;
         if (debugParams.outputNode === 'Depth') finalOutput = pipelineData.prePassDepth;
-        if (debugParams.outputNode === 'Velocity') finalOutput = pipelineData.prePassVelocity;
         if (debugParams.outputNode === 'AO') finalOutput = pipelineData.aoPassOutput;
         if (debugParams.outputNode === 'SSGI') finalOutput = ssgiNode;
-        if (debugParams.outputNode === 'SSR') finalOutput = ssrNode;
+        if (debugParams.outputNode === 'SSR') finalOutput = pipelineData.maskedSSR;
+        if (debugParams.outputNode === 'SSR Mask Only') finalOutput = pipelineData.maskedSSR.div(ssrNode.rgb);
 
         renderPipeline.outputNode = finalOutput;
         renderPipeline.needsUpdate = true;

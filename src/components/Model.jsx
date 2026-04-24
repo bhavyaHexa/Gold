@@ -15,30 +15,24 @@ export default function Model({ url, envUrl }) {
   const customGoldMaterial = useMemo(() => {
     return new MeshPhysicalMaterial({
       color: "#f5d095",
-      // 1. Pick one: High Metalness (Opaque Gold) OR High Transmission (Gold Glass)
-      metalness: 1.0,         // Keep this low if using transmission
-      roughness: 0.05,
-      // The "Glass" effect
-      // ior: 2.5,               // Index of Refraction (Standard glass is 1.5, Diamond is 2.4)
-      // thickness: 2.0,         // Required for transmission to have "depth"
-
-      // 2. Transparency settings
-      opacity: 1.0,
-      transparent: true,      // CRITICAL: opacity won't work without this
-
-      // 3. Environment Map
-      // envMap: envMap,         // Pass the envMap you loaded
-      // envMapIntensity: 1.0,
-      // envMapRotation: [0, 4.84, 0],
-
-      // 4. Extra shine
-      // clearcoat: 1.0,
-      // clearcoatRoughness: 0.1,
+      metalness: 1.0,
+      roughness: 0.08,
+      envMapIntensity: 0.5,
     });
   }, [envMap]);
+
   const currentBlackMat = useMemo(() => new MeshPhysicalMaterial({ color: "#c2a475", metalness: 1, roughness: 0.4 }), []);
 
-  const currentDiamond = useMemo(() => new MeshPhysicalMaterial({ color: "#e1e1e1", metalness: 1, roughness: 0.4 }), []);
+  const currentDiamond = useMemo(() => new MeshPhysicalMaterial({
+    color: "#ffffff",
+    metalness: 0,
+    roughness: 0,
+    transmission: 1,
+    ior: 2.4,
+    thickness: 0.5,
+    envMapIntensity: 2.0,
+    transparent: true
+  }), []);
 
   useEffect(() => {
     scene.traverse((child) => {

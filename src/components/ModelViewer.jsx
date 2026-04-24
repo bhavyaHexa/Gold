@@ -93,11 +93,11 @@ export default function ModelViewer({ modelUrl, envUrl }) {
       >
         <Suspense fallback={null}>
           <ToneMappingDebugger />
-          <AssetControls 
+          <AssetControls
             modelUrl={modelUrl}
             onModelUrlChange={setCurrentModelUrl}
-            envUrl={envUrl} 
-            onEnvUrlChange={setCurrentEnvUrl} 
+            envUrl={envUrl}
+            onEnvUrlChange={setCurrentEnvUrl}
             showBackground={showBackground}
             onShowBackgroundChange={setShowBackground}
           />
