@@ -72,6 +72,13 @@ export default function PostProcessing() {
         enabled: true,
     });
 
+    const debugParams = useControls("Debug View", {
+        outputNode: {
+            value: 'Final',
+            options: ['Final', 'Normal', 'Depth', 'Velocity', 'AO', 'SSGI', 'SSR']
+        }
+    });
+
     const pipelineData = useMemo(() => {
         const renderPipeline = new THREE.RenderPipeline(gl);
 
@@ -145,7 +152,11 @@ export default function PostProcessing() {
             ssrNode,
             traaNode,
             sceneWithSSGIandSSR,
-            gtaoIntensityNode
+            gtaoIntensityNode,
+            prePassNormal,
+            prePassDepth,
+            prePassVelocity,
+            aoPassOutput
         };
     }, [gl, scene, camera]);
 
@@ -198,10 +209,19 @@ export default function PostProcessing() {
         }
 
         // Final Output
-        renderPipeline.outputNode = traaParams.enabled ? traaNode : sceneWithSSGIandSSR;
+        let finalOutput = traaParams.enabled ? traaNode : sceneWithSSGIandSSR;
+
+        if (debugParams.outputNode === 'Normal') finalOutput = pipelineData.prePassNormal;
+        if (debugParams.outputNode === 'Depth') finalOutput = pipelineData.prePassDepth;
+        if (debugParams.outputNode === 'Velocity') finalOutput = pipelineData.prePassVelocity;
+        if (debugParams.outputNode === 'AO') finalOutput = pipelineData.aoPassOutput;
+        if (debugParams.outputNode === 'SSGI') finalOutput = ssgiNode;
+        if (debugParams.outputNode === 'SSR') finalOutput = ssrNode;
+
+        renderPipeline.outputNode = finalOutput;
         renderPipeline.needsUpdate = true;
 
-    }, [aoParams, ssgiParams, ssrParams, traaParams, pipelineData]);
+    }, [aoParams, ssgiParams, ssrParams, traaParams, debugParams, pipelineData]);
 
     useFrame(() => {
         if (!pipelineData.renderPipeline.outputNode) return;

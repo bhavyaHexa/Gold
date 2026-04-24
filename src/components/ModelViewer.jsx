@@ -1,6 +1,6 @@
 import { Canvas, useThree, extend } from "@react-three/fiber";
 import { Environment, Effects } from "@react-three/drei";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useControls } from "leva";
 import * as THREE from "three";
 import Model from "./Model";
@@ -36,7 +36,29 @@ function ToneMappingDebugger() {
   return null;
 }
 
+function AssetControls({ modelUrl, onModelUrlChange, envUrl, onEnvUrlChange, showBackground, onShowBackgroundChange }) {
+  useControls("Assets", {
+    modelUrl: {
+      value: modelUrl,
+      onChange: (v) => onModelUrlChange(v),
+    },
+    environmentUrl: {
+      value: envUrl,
+      onChange: (v) => onEnvUrlChange(v),
+    },
+    showBackground: {
+      value: showBackground,
+      onChange: (v) => onShowBackgroundChange(v),
+    }
+  });
+  return null;
+}
+
 export default function ModelViewer({ modelUrl, envUrl }) {
+  const [currentModelUrl, setCurrentModelUrl] = useState(modelUrl);
+  const [currentEnvUrl, setCurrentEnvUrl] = useState(envUrl);
+  const [showBackground, setShowBackground] = useState(false);
+
   return (
     <div style={{ background: "#ffffff", width: "100vw", height: "100vh" }}>
       <Canvas
@@ -71,17 +93,26 @@ export default function ModelViewer({ modelUrl, envUrl }) {
       >
         <Suspense fallback={null}>
           <ToneMappingDebugger />
-          <color attach="background" args={["#ffffff"]} />
+          <AssetControls 
+            modelUrl={modelUrl}
+            onModelUrlChange={setCurrentModelUrl}
+            envUrl={envUrl} 
+            onEnvUrlChange={setCurrentEnvUrl} 
+            showBackground={showBackground}
+            onShowBackgroundChange={setShowBackground}
+          />
+          {!showBackground && <color attach="background" args={["#ffffff"]} />}
           <Environment
             frames={Infinity}
-            files={envUrl}
+            files={currentEnvUrl}
+            background={showBackground}
             resolution={256}
             environmentIntensity={1}
             environmentRotation={[0, -4.38, 0]}
           />
 
           <RotateModelWrapper minPitch={-0.2} maxPitch={1.5}>
-            <Model url={modelUrl} envUrl={envUrl} />
+            <Model url={currentModelUrl} envUrl={currentEnvUrl} />
 
             {/* <mesh position={[-1, 0, -2]}>
               <sphereGeometry args={[0.5, 64, 64]} />
